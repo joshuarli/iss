@@ -102,8 +102,8 @@ static void post_switch(bool right) {
 // swipes that skip Changed entirely). Returns NULL to suppress the original
 // event, or ev to pass it through.
 
-static CGEventRef cb(CGEventTapProxy p, CGEventType type, CGEventRef ev, void *ctx) {
-    (void)p; (void)ctx;
+static CGEventRef cb(CGEventTapProxy proxy, CGEventType type, CGEventRef ev, void *ctx) {
+    (void)proxy; (void)ctx;
 
     // System disabled our tap (callback too slow) — re-enable
     if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {

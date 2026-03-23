@@ -11,6 +11,9 @@ LDFLAGS  = -framework ApplicationServices -framework CoreFoundation \
 $(BIN): iss.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
+lint: iss.c
+	cppcheck --enable=warning,style,performance --error-exitcode=1 iss.c
+
 install: $(BIN)
 	install -d $(PREFIX)/bin
 	install -m 755 $(BIN) $(PREFIX)/bin/$(BIN)
