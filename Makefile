@@ -1,4 +1,4 @@
-PREFIX  ?= /usr/local
+PREFIX  ?= $(HOME)/.local
 BIN      = iss
 LABEL    = com.instant-swipe
 AGENT_DIR = $(HOME)/Library/LaunchAgents
