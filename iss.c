@@ -14,7 +14,8 @@
 //   5. Companion kCGSEventGesture events are also suppressed during an
 //      active swipe to keep the event stream consistent.
 //
-// Vertical swipes (Mission Control, App Exposé) are left untouched.
+// Horizontal swipes in Mission Control / App Exposé are detected via
+// Dock overlay windows and passed through to native handling.
 // Does not require disabling SIP.
 
 #include <ApplicationServices/ApplicationServices.h>
@@ -165,6 +166,26 @@ static CGEventRef cb(CGEventTapProxy proxy, CGEventType type, CGEventRef ev, voi
         int phase = (int)CGEventGetIntegerValueField(ev, kCGEventGesturePhase);
 
         if (phase == kGestureBegan) {
+            // Don't intercept when in Mission Control or App Exposé.
+            // The Dock creates overlay windows at non-negative layers;
+            // normally its only windows are at desktop level (< 0).
+            CFArrayRef wlist = CGWindowListCopyWindowInfo(
+                kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
+            if (wlist) {
+                bool overlay = false;
+                for (CFIndex i = 0, n = CFArrayGetCount(wlist); i < n && !overlay; i++) {
+                    CFDictionaryRef w = CFArrayGetValueAtIndex(wlist, i);
+                    CFStringRef name = CFDictionaryGetValue(w, kCGWindowOwnerName);
+                    if (!name || !CFEqual(name, CFSTR("Dock"))) continue;
+                    CFNumberRef layer = CFDictionaryGetValue(w, kCGWindowLayer);
+                    if (!layer) continue;
+                    int32_t l;
+                    CFNumberGetValue(layer, kCFNumberSInt32Type, &l);
+                    if (l >= 0) overlay = true;
+                }
+                CFRelease(wlist);
+                if (overlay) return ev;
+            }
             swipeTracking = true; swipeFired = false; return NULL;
         }
         if (phase == kGestureChanged && swipeTracking) {
@@ -221,5 +242,6 @@ int main(void) {
     CGEventTapEnable(tap, false);
     CFRunLoopRemoveSource(CFRunLoopGetMain(), src, kCFRunLoopCommonModes);
     CFRelease(src); CFRelease(tap);
+
     return 0;
 }
