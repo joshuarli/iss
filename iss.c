@@ -44,6 +44,10 @@ enum { kIOHIDEventTypeDockSwipe = 23 };
 enum { kCGGestureMotionHorizontal = 1 };
 enum { kGestureBegan = 1, kGestureChanged = 2, kGestureEnded = 4, kGestureCancelled = 8 };
 
+extern int CGSMainConnectionID(void);
+extern uint64_t CGSGetActiveSpace(int cid);
+extern CFArrayRef CGSCopyManagedDisplaySpaces(int cid);
+
 // --- State -------------------------------------------------------------------
 
 static CFMachPortRef tap;
@@ -79,7 +83,41 @@ static bool post_pair(CGEventRef dock) {
     return true;
 }
 
+// Check whether there is a space to switch to in the given direction.
+// Queries the private CGS API for the per-display space list and finds
+// the active space's position within it.
+static bool can_switch(bool right) {
+    int cid = CGSMainConnectionID();
+    uint64_t active = CGSGetActiveSpace(cid);
+    CFArrayRef displays = CGSCopyManagedDisplaySpaces(cid);
+    if (!displays) return true;
+
+    bool can = true;
+    for (CFIndex i = 0; i < CFArrayGetCount(displays); i++) {
+        CFDictionaryRef display = CFArrayGetValueAtIndex(displays, i);
+        CFArrayRef spaces = CFDictionaryGetValue(display, CFSTR("Spaces"));
+        if (!spaces) continue;
+        CFIndex count = CFArrayGetCount(spaces);
+        for (CFIndex j = 0; j < count; j++) {
+            CFDictionaryRef space = CFArrayGetValueAtIndex(spaces, j);
+            CFNumberRef sid = CFDictionaryGetValue(space, CFSTR("ManagedSpaceID"));
+            if (!sid) continue;
+            int64_t val;
+            CFNumberGetValue(sid, kCFNumberSInt64Type, &val);
+            if ((uint64_t)val == active) {
+                if (right && j == count - 1) can = false;
+                if (!right && j == 0) can = false;
+                goto done;
+            }
+        }
+    }
+done:
+    CFRelease(displays);
+    return can;
+}
+
 static void post_switch(bool right) {
+    if (!can_switch(right)) return;
     double sign = right ? 1.0 : -1.0;
 
     CGEventRef begin = make_dock_event(kGestureBegan, right);
