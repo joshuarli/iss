@@ -19,6 +19,7 @@ install: $(BIN)
 	install -m 755 $(BIN) $(PREFIX)/bin/$(BIN)
 	codesign -fs - $(PREFIX)/bin/$(BIN)
 	xattr -d com.apple.quarantine $(PREFIX)/bin/$(BIN) 2>/dev/null || true
+	mkdir -p $(AGENT_DIR)
 	printf '%s\n' \
 	  '<?xml version="1.0" encoding="UTF-8"?>' \
 	  '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"' \
