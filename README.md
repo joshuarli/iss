@@ -17,9 +17,13 @@ The private event field indices and dock-swipe HID type have been stable since 3
 
 ## Install
 
-```
+```bash
 # builds, installs to ~/.local/bin/iss, starts launch agent
 # use sudo make install PREFIX=/usr/local if you want but it's not necessary
+
+# (if needed: xcode-select --install)
+git clone https://github.com/joshuarli/iss.git
+cd iss
 make install
 ```
 
@@ -27,6 +31,7 @@ Runs automatically at login via launchd. Grant Accessibility permission when pro
 
 ## Uninstall
 
-```
+```bash
+# from the cloned iss repository
 make uninstall
 ```
