@@ -21,6 +21,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <float.h>
 #include <signal.h>
+#include <string.h>
 #include <stdbool.h>
 #include <stdio.h>
 
@@ -65,7 +66,11 @@ static CGEventRef make_dock_event(int phase, bool right) {
     CGEventSetIntegerValueField(ev, kCGSEventTypeField, kCGSEventDockControl);
     CGEventSetIntegerValueField(ev, kCGEventGestureHIDType, kIOHIDEventTypeDockSwipe);
     CGEventSetIntegerValueField(ev, kCGEventGesturePhase, phase);
-    CGEventSetIntegerValueField(ev, kCGEventScrollGestureFlagBits, right ? 1 : 0);
+    // Empirically, ±FLT_TRUE_MIN here makes switching instant.
+    const float flagsProgress = right ? FLT_TRUE_MIN : -FLT_TRUE_MIN;
+    int32_t scrollGestureFlagDirection;
+    memcpy(&scrollGestureFlagDirection, &flagsProgress, sizeof(scrollGestureFlagDirection));
+    CGEventSetIntegerValueField(ev, kCGEventScrollGestureFlagBits, scrollGestureFlagDirection);
     CGEventSetIntegerValueField(ev, kCGEventGestureSwipeMotion, kCGGestureMotionHorizontal);
     CGEventSetDoubleValueField(ev, kCGEventGestureScrollY, 0);
     CGEventSetDoubleValueField(ev, kCGEventGestureZoomDeltaX, FLT_TRUE_MIN);
@@ -123,14 +128,17 @@ static void post_switch(bool right) {
     CGEventRef begin = make_dock_event(kGestureBegan, right);
     if (!begin) return;
 
+    CGEventRef changed = make_dock_event(kGestureChanged, right);
+    if (!changed) { CFRelease(begin); return; }
+
     CGEventRef end = make_dock_event(kGestureEnded, right);
-    if (!end) { CFRelease(begin); return; }
-    CGEventSetDoubleValueField(end, kCGEventGestureSwipeProgress, sign * 2.0);
+    if (!end) { CFRelease(begin); CFRelease(changed); return; }
     CGEventSetDoubleValueField(end, kCGEventGestureSwipeVelocityX, sign * 400.0);
     CGEventSetDoubleValueField(end, kCGEventGestureSwipeVelocityY, 0);
 
-    passthrough += 4; // 2 pairs × 2 events
+    passthrough += 6; // 3 pairs × 2 events
     post_pair(begin);
+    post_pair(changed);
     post_pair(end);
 }
 
