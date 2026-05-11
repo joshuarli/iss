@@ -1,6 +1,7 @@
 // iss — Instant Space Switcher
 //
-// Eliminates the macOS sliding animation when 3-finger swiping between spaces.
+// Eliminates the macOS sliding animation when switching spaces via 3-finger
+// swipe or Control+Arrow keyboard shortcut.
 //
 // How it works:
 //   1. A CGEventTap intercepts trackpad dock-swipe gesture events (private
@@ -48,6 +49,62 @@ enum { kGestureBegan = 1, kGestureChanged = 2, kGestureEnded = 4, kGestureCancel
 extern int CGSMainConnectionID(void);
 extern uint64_t CGSGetActiveSpace(int cid);
 extern CFArrayRef CGSCopyManagedDisplaySpaces(int cid);
+
+// --- Keyboard shortcut configuration -----------------------------------------
+// Read "Move left/right a space" shortcuts from System Preferences.
+// Keys 79 and 81 in com.apple.symbolichotkeys, parameters = (unicode, keycode, modifiers).
+
+static const CGEventFlags kModifierMask = kCGEventFlagMaskShift | kCGEventFlagMaskControl
+                                        | kCGEventFlagMaskAlternate | kCGEventFlagMaskCommand;
+
+typedef struct { int64_t keycode; CGEventFlags modifiers; bool enabled; } hotkey;
+
+static hotkey hk_left  = { 123, kCGEventFlagMaskControl, true }; // defaults
+static hotkey hk_right = { 124, kCGEventFlagMaskControl, true };
+
+static void load_hotkey(CFDictionaryRef hotkeys, CFStringRef key, hotkey *hk) {
+    CFDictionaryRef entry;
+    if (!CFDictionaryGetValueIfPresent(hotkeys, key, (const void **)&entry)) return;
+
+    CFBooleanRef enabled = CFDictionaryGetValue(entry, CFSTR("enabled"));
+    if (enabled && !CFBooleanGetValue(enabled)) { hk->enabled = false; return; }
+
+    CFDictionaryRef value = CFDictionaryGetValue(entry, CFSTR("value"));
+    if (!value) return; // no value = using system defaults, keep our defaults
+
+    CFArrayRef params = CFDictionaryGetValue(value, CFSTR("parameters"));
+    if (!params || CFArrayGetCount(params) < 3) return;
+
+    CFNumberRef n_keycode = CFArrayGetValueAtIndex(params, 1);
+    CFNumberRef n_mods    = CFArrayGetValueAtIndex(params, 2);
+    int64_t keycode, mods;
+    CFNumberGetValue(n_keycode, kCFNumberSInt64Type, &keycode);
+    CFNumberGetValue(n_mods,    kCFNumberSInt64Type, &mods);
+
+    // keycode 65535 means "not assigned"
+    if (keycode == 65535) { hk->enabled = false; return; }
+
+    hk->keycode   = keycode;
+    hk->modifiers = (CGEventFlags)mods & kModifierMask;
+}
+
+static void load_hotkeys(void) {
+    CFStringRef app = CFSTR("com.apple.symbolichotkeys");
+    CFStringRef key = CFSTR("AppleSymbolicHotKeys");
+    CFPropertyListRef plist = CFPreferencesCopyAppValue(key, app);
+    if (!plist) return;
+    if (CFGetTypeID(plist) != CFDictionaryGetTypeID()) { CFRelease(plist); return; }
+
+    // Reset to defaults, then overlay with any customizations. If the user
+    // reverts to defaults the plist entry loses its "value" key, so we need
+    // to start from known-good values each time we successfully read.
+    hk_left  = (hotkey){ 123, kCGEventFlagMaskControl, true };
+    hk_right = (hotkey){ 124, kCGEventFlagMaskControl, true };
+
+    load_hotkey(plist, CFSTR("79"), &hk_left);
+    load_hotkey(plist, CFSTR("81"), &hk_right);
+    CFRelease(plist);
+}
 
 // --- State -------------------------------------------------------------------
 
@@ -157,6 +214,22 @@ static CGEventRef cb(CGEventTapProxy proxy, CGEventType type, CGEventRef ev, voi
         return ev;
     }
 
+    // Intercept "Move left/right a space" keyboard shortcuts.
+    // Reload hotkeys on every keydown so changes in System Settings take
+    // effect immediately without restarting. CFPreferencesCopyAppValue is
+    // backed by an in-process cache that only hits disk on change via
+    // Darwin notifications, so this is just a dictionary lookup.
+    if (type == kCGEventKeyDown) {
+        load_hotkeys();
+        CGEventFlags flags = CGEventGetFlags(ev) & kModifierMask;
+        int64_t keycode = CGEventGetIntegerValueField(ev, kCGKeyboardEventKeycode);
+        if (hk_left.enabled  && keycode == hk_left.keycode  && flags == hk_left.modifiers)
+            { post_switch(false); return NULL; }
+        if (hk_right.enabled && keycode == hk_right.keycode && flags == hk_right.modifiers)
+            { post_switch(true);  return NULL; }
+        return ev;
+    }
+
     int et = (int)CGEventGetIntegerValueField(ev, kCGSEventTypeField);
 
     // Let our own synthetic events pass through untouched
@@ -212,10 +285,13 @@ int main(void) {
     CFRelease(opts);
     if (!ok) { fprintf(stderr, "Grant Accessibility permission, then re-run.\n"); return 1; }
 
-    // Listen for gesture + dock control events
+    load_hotkeys();
+
+    // Listen for gesture + dock control + keyboard events
     tap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap,
         kCGEventTapOptionDefault,
-        (1ULL << kCGSEventGesture) | (1ULL << kCGSEventDockControl), cb, NULL);
+        (1ULL << kCGSEventGesture) | (1ULL << kCGSEventDockControl)
+        | (1ULL << kCGEventKeyDown), cb, NULL);
     if (!tap) { fprintf(stderr, "Failed to create event tap.\n"); return 1; }
 
     CFRunLoopSourceRef src = CFMachPortCreateRunLoopSource(NULL, tap, 0);
