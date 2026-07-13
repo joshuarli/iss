@@ -8,8 +8,10 @@ CFLAGS  ?= -std=c11 -O3 -march=native -pipe -flto -Wall -Wextra -Wpedantic
 LDFLAGS  = -framework ApplicationServices -framework CoreFoundation \
            -Wl,-dead_strip -Wl,-dead_strip_dylibs -Wl,-x
 
-$(BIN): iss.c
+$(BIN): iss.c Makefile
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+	codesign --force --sign - --identifier $(BIN) \
+	  --requirements '=designated => identifier "$(BIN)"' $@
 
 lint: iss.c
 	cppcheck --enable=warning,style,performance --error-exitcode=1 iss.c
@@ -48,4 +50,4 @@ uninstall:
 clean:
 	rm -f $(BIN)
 
-.PHONY: install uninstall clean
+.PHONY: install uninstall clean lint
