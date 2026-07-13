@@ -3,16 +3,18 @@
 // Eliminates the macOS sliding animation when 3-finger swiping between spaces.
 //
 // How it works:
-//   1. A CGEventTap intercepts trackpad dock-swipe gesture events (private
-//      CGS event type 30, HID type 23) before the Dock sees them.
-//   2. Real gesture events are suppressed (callback returns NULL).
-//   3. On the first event with a clear direction, a synthetic Begin+End
-//      gesture pair is posted with high velocity (±400), causing the Dock
-//      to switch spaces instantly — no animation.
-//   4. A passthrough counter prevents the tap from re-intercepting its own
-//      synthetic events (CGEvent field tags don't survive CGEventPost).
-//   5. Companion kCGSEventGesture events are also suppressed during an
-//      active swipe to keep the event stream consistent.
+//   1. A session-level CGEventTap intercepts horizontal trackpad dock-swipe
+//      events (private CGS event type 30, HID type 23) before the Dock sees them.
+//   2. Real swipe events are suppressed, and direction is detected from the
+//      first nonzero progress event or, for discrete swipes, the ending velocity.
+//   3. A synthetic Begin+Changed+End sequence is posted, with each DockControl
+//      event paired with a companion kCGSEventGesture event. Before macOS 27,
+//      the End event uses high velocity (±400); macOS 27 and later also require
+//      a serialized raw IOHID queue payload on every synthetic phase.
+//   4. A passthrough counter lets the synthetic events through the tap without
+//      re-interception (CGEvent field tags don't survive CGEventPost).
+//   5. On macOS 27 and later, the real terminal event is passed through after
+//      its gesture fields are cleared so the Dock can close its native state.
 //
 // Vertical swipes (Mission Control, App Exposé) are left untouched.
 // Does not require disabling SIP.
@@ -240,8 +242,8 @@ static bool requires_event_augmentation(void) {
         return false;
     }
 
-    int major = 0, minor = 0, patch = 0;
-    if (sscanf(version, "%d.%d.%d", &major, &minor, &patch) < 1) {
+    int major = 0;
+    if (sscanf(version, "%d", &major) < 1) {
         cached_result = 0;
         return false;
     }
@@ -266,7 +268,7 @@ static bool accessibility_is_trusted(void) {
     return AXIsProcessTrustedWithOptions(NULL);
 }
 
-// Create a DockControl event with fields common to both Begin and End phases.
+// Create a DockControl event with fields common to the synthetic phases.
 static CGEventRef make_dock_event(int phase, bool right) {
     CGEventRef ev = CGEventCreate(NULL);
     if (!ev) return NULL;
