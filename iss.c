@@ -46,6 +46,13 @@ enum { kIOHIDEventTypeDockSwipe = 23 };
 enum { kCGGestureMotionHorizontal = 1 };
 enum { kGestureBegan = 1, kGestureChanged = 2, kGestureEnded = 4, kGestureCancelled = 8 };
 
+// macOS 26 reports horizontal swipe direction opposite to earlier releases.
+#if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 260000
+#define ISS_SWIPE_DIRECTION_REVERSED 1
+#else
+#define ISS_SWIPE_DIRECTION_REVERSED 0
+#endif
+
 extern int CGSMainConnectionID(void);
 extern uint64_t CGSGetActiveSpace(int cid);
 extern CFArrayRef CGSCopyManagedDisplaySpaces(int cid);
@@ -366,6 +373,16 @@ static void post_switch(bool right) {
     post_pair(end);
 }
 
+static bool is_right_swipe(double direction) {
+    if (requires_event_augmentation()) return direction < 0.0;
+
+#if ISS_SWIPE_DIRECTION_REVERSED
+    return direction > 0.0;
+#else
+    return direction < 0.0;
+#endif
+}
+
 // Intercepts real horizontal dock swipes. Direction is determined from swipe
 // progress (Changed phase) or velocity (Ended phase, fallback for discrete
 // swipes that skip Changed entirely). Returns NULL to suppress the original
@@ -400,14 +417,14 @@ static CGEventRef cb(CGEventTapProxy proxy, CGEventType type, CGEventRef ev, voi
         if (phase == kGestureChanged && swipeTracking) {
             if (!swipeFired) {
                 double p = CGEventGetDoubleValueField(ev, kCGEventGestureSwipeProgress);
-                if (p != 0.0) { swipeFired = true; post_switch(p < 0); }
+                if (p != 0.0) { swipeFired = true; post_switch(is_right_swipe(p)); }
             }
             return NULL;
         }
         if (phase == kGestureEnded && swipeTracking) {
             if (!swipeFired) {
                 double v = CGEventGetDoubleValueField(ev, kCGEventGestureSwipeVelocityX);
-                if (v != 0.0) post_switch(v < 0);
+                if (v != 0.0) post_switch(is_right_swipe(v));
             }
             swipeTracking = swipeFired = false;
             if (requires_event_augmentation()) {
