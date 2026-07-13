@@ -540,7 +540,11 @@ int main(void) {
 
     fprintf(stderr, "iss: instant swipe active\n");
     while (running) {
-        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.25, true);
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 5.0, true);
+        // macOS provides no public notification for Accessibility trust changes.
+        // The event-tap disabled callbacks handle immediate failures; this
+        // low-frequency check detects revocation or restoration when no such
+        // callback is delivered.
         bool trusted = accessibility_is_trusted();
         if (trusted != tap_trusted) {
             reset_gesture_state();
