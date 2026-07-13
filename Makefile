@@ -10,8 +10,6 @@ LDFLAGS  = -framework ApplicationServices -framework CoreFoundation \
 
 $(BIN): iss.c Makefile
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
-	codesign --force --sign - --identifier $(BIN) \
-	  --requirements '=designated => identifier "$(BIN)"' $@
 
 lint: iss.c
 	cppcheck --enable=warning,style,performance --error-exitcode=1 iss.c

@@ -40,6 +40,13 @@ static const CGEventField kCGEventGestureSwipeVelocityY = 130;
 static const CGEventField kCGEventGesturePhase          = 132; // began/changed/ended
 static const CGEventField kCGEventScrollGestureFlagBits = 135; // direction hint
 static const CGEventField kCGEventGestureZoomDeltaX     = 139; // required, reason unknown
+static const CGEventField kCGEventGestureSwipeMask      = 115;
+static const CGEventField kCGEventGestureSwipePositionX = 125;
+static const CGEventField kCGEventGestureSwipePositionY = 126;
+static const CGEventField kCGEventGesturePhaseAlias     = 134;
+static const CGEventField kCGEventGestureZoomDeltaY     = 138;
+static const CGEventField kCGEventSourceProcessAlias    = 169;
+static const CGEventField kCGEventRawIOHIDPayload       = 4205;
 
 enum { kCGSEventGesture = 29, kCGSEventDockControl = 30 };
 enum { kIOHIDEventTypeDockSwipe = 23 };
@@ -97,6 +104,14 @@ typedef struct {
 
 #pragma pack(pop)
 
+_Static_assert(sizeof(IOHIDEventBase) == 16, "unexpected IOHID event base layout");
+_Static_assert(sizeof(IOHIDFluidTouchGestureData) == 40,
+               "unexpected IOHID fluid gesture layout");
+_Static_assert(sizeof(IOHIDVelocityEventData) == 28,
+               "unexpected IOHID velocity layout");
+_Static_assert(sizeof(IOHIDSystemQueueElementHeader) == 28,
+               "unexpected IOHID queue header layout");
+
 static const uint32_t kIOHIDEventTypeVelocity = 9;
 static const uint32_t kIOHIDEventTypeFluidTouchGesture = 23;
 static const uint16_t kIOHIDGestureFlavorDockPrimary = 3;
@@ -111,11 +126,11 @@ static uint8_t *generate_iohid_payload(CGEventRef event, size_t *out_length) {
     int64_t phase = CGEventGetIntegerValueField(event, (CGEventField)132);
     int64_t motion = CGEventGetIntegerValueField(event, (CGEventField)123);
     double progress = CGEventGetDoubleValueField(event, (CGEventField)124);
-    double pos_x = CGEventGetDoubleValueField(event, (CGEventField)125);
-    double pos_y = CGEventGetDoubleValueField(event, (CGEventField)126);
+    double pos_x = CGEventGetDoubleValueField(event, kCGEventGestureSwipePositionX);
+    double pos_y = CGEventGetDoubleValueField(event, kCGEventGestureSwipePositionY);
     double vel_x = CGEventGetDoubleValueField(event, (CGEventField)129);
     double vel_y = CGEventGetDoubleValueField(event, (CGEventField)130);
-    int64_t swipe_mask = CGEventGetIntegerValueField(event, (CGEventField)115);
+    int64_t swipe_mask = CGEventGetIntegerValueField(event, kCGEventGestureSwipeMask);
 
     bool include_velocity = (vel_x != 0.0 || vel_y != 0.0 || phase == 4);
     uint32_t event_count = include_velocity ? 2 : 1;
@@ -192,8 +207,8 @@ static CGEventRef augment_dock_swipe_event(CGEventRef event) {
     memcpy(new_bytes, bytes, length);
     new_bytes[length] = (uint8_t)(payload_length >> 8);
     new_bytes[length + 1] = (uint8_t)payload_length;
-    new_bytes[length + 2] = (uint8_t)(4205 >> 8);
-    new_bytes[length + 3] = (uint8_t)4205;
+    new_bytes[length + 2] = (uint8_t)(kCGEventRawIOHIDPayload >> 8);
+    new_bytes[length + 3] = (uint8_t)kCGEventRawIOHIDPayload;
     memcpy(new_bytes + length + 4, payload, payload_length);
 
     free(payload);
@@ -266,10 +281,11 @@ static CGEventRef make_augmented_dock_event(int phase, bool right) {
     CGEventSetIntegerValueField(ev, kCGEventGesturePhase, phase);
     CGEventSetDoubleValueField(ev, kCGEventGestureSwipeProgress, right ? -1.0 : 1.0);
     CGEventSetIntegerValueField(ev, kCGEventGestureSwipeMotion, kCGGestureMotionHorizontal);
-    CGEventSetIntegerValueField(ev, (CGEventField)134, phase);
-    CGEventSetDoubleValueField(ev, (CGEventField)138, 3.0);
-    CGEventSetDoubleValueField(ev, (CGEventField)169, (double)mach_absolute_time());
-    CGEventSetDoubleValueField(ev, (CGEventField)125, 0.1);
+    CGEventSetIntegerValueField(ev, kCGEventGesturePhaseAlias, phase);
+    CGEventSetDoubleValueField(ev, kCGEventGestureZoomDeltaY, 3.0);
+    CGEventSetDoubleValueField(ev, kCGEventSourceProcessAlias,
+                               (double)mach_absolute_time());
+    CGEventSetDoubleValueField(ev, kCGEventGestureSwipePositionX, 0.1);
     if (phase == kGestureEnded) {
         CGEventSetDoubleValueField(ev, kCGEventGestureSwipeVelocityX,
                                    right ? -9999.0 : 9999.0);
@@ -286,6 +302,13 @@ static bool post_pair(CGEventRef dock) {
     CGEventPost(kCGSessionEventTap, companion);
     CFRelease(dock); CFRelease(companion);
     return true;
+}
+
+static bool post_tracked_pair(CGEventRef dock) {
+    passthrough += 2;
+    if (post_pair(dock)) return true;
+    passthrough -= 2;
+    return false;
 }
 
 // Check whether there is a space to switch to in the given direction.
@@ -333,9 +356,14 @@ static void post_augmented_switch(bool right) {
         if (!events[i]) goto cleanup;
     }
 
-    passthrough += 6;
     for (int i = 0; i < 3; i++) {
-        post_pair(events[i]);
+        if (!post_tracked_pair(events[i])) {
+            events[i] = NULL;
+            for (int j = i + 1; j < 3; j++) {
+                CFRelease(events[j]);
+            }
+            return;
+        }
         events[i] = NULL;
     }
     return;
@@ -348,6 +376,8 @@ cleanup:
 
 static void post_switch(bool right) {
     bool augmented = requires_event_augmentation();
+    // On macOS 27, CGSGetActiveSpace() can lag behind the Dock's synthetic
+    // switch, so the Dock itself handles boundary spaces on this path.
     if (!augmented && !can_switch(right)) return;
 
     if (augmented) {
@@ -367,10 +397,16 @@ static void post_switch(bool right) {
     CGEventSetDoubleValueField(end, kCGEventGestureSwipeVelocityX, sign * 400.0);
     CGEventSetDoubleValueField(end, kCGEventGestureSwipeVelocityY, 0);
 
-    passthrough += 6; // 3 pairs × 2 events
-    post_pair(begin);
-    post_pair(changed);
-    post_pair(end);
+    if (!post_tracked_pair(begin)) {
+        CFRelease(changed);
+        CFRelease(end);
+        return;
+    }
+    if (!post_tracked_pair(changed)) {
+        CFRelease(end);
+        return;
+    }
+    post_tracked_pair(end);
 }
 
 static bool is_right_swipe(double direction) {
