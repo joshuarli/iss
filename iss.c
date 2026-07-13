@@ -253,6 +253,18 @@ static bool requires_event_augmentation(void) {
 static CFMachPortRef tap;
 static bool swipeTracking, swipeFired;
 static int passthrough; // synthetic events remaining to let through
+static bool tap_trusted;
+static bool tap_enabled;
+
+static void reset_gesture_state(void) {
+    swipeTracking = false;
+    swipeFired = false;
+    passthrough = 0;
+}
+
+static bool accessibility_is_trusted(void) {
+    return AXIsProcessTrustedWithOptions(NULL);
+}
 
 // Create a DockControl event with fields common to both Begin and End phases.
 static CGEventRef make_dock_event(int phase, bool right) {
@@ -427,8 +439,25 @@ static CGEventRef cb(CGEventTapProxy proxy, CGEventType type, CGEventRef ev, voi
     (void)proxy; (void)ctx;
 
     // System disabled our tap (callback too slow) — re-enable.
-    if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
+    if (type == kCGEventTapDisabledByUserInput) {
+        reset_gesture_state();
+        if (accessibility_is_trusted()) {
+            CGEventTapEnable(tap, true);
+            tap_enabled = true;
+            fprintf(stderr, "iss: event tap re-enabled\n");
+        }
+        return ev;
+    }
+    if (type == kCGEventTapDisabledByTimeout) {
+        if (!accessibility_is_trusted()) {
+            reset_gesture_state();
+            CGEventTapEnable(tap, false);
+            tap_enabled = false;
+            fprintf(stderr, "iss: Accessibility permission removed; event tap disabled\n");
+            return ev;
+        }
         CGEventTapEnable(tap, true);
+        tap_enabled = true;
         return ev;
     }
 
@@ -505,10 +534,25 @@ int main(void) {
     CFRunLoopSourceRef src = CFMachPortCreateRunLoopSource(NULL, tap, 0);
     CFRunLoopAddSource(CFRunLoopGetMain(), src, kCFRunLoopCommonModes);
     CGEventTapEnable(tap, true);
+    tap_trusted = true;
+    tap_enabled = true;
     signal(SIGINT, stop); signal(SIGTERM, stop);
 
     fprintf(stderr, "iss: instant swipe active\n");
-    while (running) CFRunLoopRunInMode(kCFRunLoopDefaultMode, 1.0, true);
+    while (running) {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.25, true);
+        bool trusted = accessibility_is_trusted();
+        if (trusted != tap_trusted) {
+            reset_gesture_state();
+            tap_trusted = trusted;
+            fprintf(stderr, "iss: Accessibility %s\n", trusted ? "restored" : "removed");
+        }
+        if (trusted != tap_enabled) {
+            CGEventTapEnable(tap, trusted);
+            tap_enabled = trusted;
+            fprintf(stderr, "iss: event tap %s\n", trusted ? "enabled" : "disabled");
+        }
+    }
 
     CGEventTapEnable(tap, false);
     CFRunLoopRemoveSource(CFRunLoopGetMain(), src, kCFRunLoopCommonModes);
