@@ -24,6 +24,14 @@ lint: iss.c
 
 test: iss.c
 	$(CC) $(CFLAGS) -Werror -fsyntax-only iss.c
+	mkdir -p .work/tmp
+	$(CC) $(CFLAGS) -Werror -o .work/tmp/iss-test iss.c $(LDFLAGS)
+	@set -eu; \
+	for option in -h --help; do \
+	  if .work/tmp/iss-test "$$option" > .work/tmp/iss-help.out 2> .work/tmp/iss-help.err; then :; else exit 1; fi; \
+	  test ! -s .work/tmp/iss-help.err; \
+	  grep -Fqx 'Maintained by Joshua Li: https://github.com/joshuarli/iss' .work/tmp/iss-help.out; \
+	done
 
 install: $(BIN)
 	install -d $(PREFIX)/bin

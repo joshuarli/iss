@@ -518,7 +518,15 @@ static CGEventRef cb(CGEventTapProxy proxy, CGEventType type, CGEventRef ev, voi
 static volatile sig_atomic_t running = 1;
 static void stop(int s) { (void)s; running = 0; }
 
-int main(void) {
+int main(int argc, char **argv) {
+    if (argc == 2 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
+        printf("Usage: iss [-h | --help]\n"
+               "Run iss without options to replace horizontal three-finger trackpad swipe animations with synthetic space-switch gestures.\n"
+               "Vertical swipes pass through. Accessibility permission is required.\n"
+               "Maintained by Joshua Li: https://github.com/joshuarli/iss\n");
+        return 0;
+    }
+
     // Prompt for Accessibility permission if not already granted.
     const void *k[] = { kAXTrustedCheckOptionPrompt }, *v[] = { kCFBooleanTrue };
     CFDictionaryRef opts = CFDictionaryCreate(NULL, k, v, 1,
