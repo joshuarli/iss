@@ -22,6 +22,9 @@ $(BIN): iss.c Makefile
 lint: iss.c
 	cppcheck --enable=warning,style,performance --error-exitcode=1 iss.c
 
+test: iss.c
+	$(CC) $(CFLAGS) -Werror -fsyntax-only iss.c
+
 install: $(BIN)
 	install -d $(PREFIX)/bin
 	install -m 755 $(BIN) $(PREFIX)/bin/$(BIN)
@@ -56,4 +59,4 @@ uninstall:
 clean:
 	rm -f $(BIN)
 
-.PHONY: install uninstall clean lint
+.PHONY: install uninstall clean lint test
